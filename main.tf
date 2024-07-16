@@ -3,7 +3,7 @@
 ########################################################################
 
 resource "aws_vpc" "vpc" {
-  cidr_block = "10.0.0.0/16"
+  cidr_block = "10.0.0.0/27"
   enable_dns_support = true
   enable_dns_hostnames = true
 
@@ -21,7 +21,7 @@ resource "aws_subnet" "public_subnet" {
   map_public_ip_on_launch = true
 
   tags = {
-    name      = each.key # sets the name from the current iteration of var.public_subnet
+    name      = "public-subnet-${count.index + 1}" # sets the name from the current iteration of var.public_subnet
     terraform = "true"
   }
 }
@@ -72,6 +72,13 @@ resource "aws_security_group" "ecs_sg" {
   description = "security group for ECS containers"
   vpc_id      = aws_vpc.vpc.id
 
+  ingress {
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -84,6 +91,7 @@ resource "aws_security_group" "ecs_sg" {
     terraform = "true"
   }
 }
+
 
 ########################################################################
 ####################            ECR            #########################
@@ -103,7 +111,7 @@ resource "aws_ecr_repository" "ecr_repo" {
 ########################################################################
 
 resource "aws_ecs_cluster" "ecs_cluster" {
-  name = "demo-cluster"
+  name = "ecs-cluster"
 
   tags = {
     name      = "ecs-cluster"
@@ -111,33 +119,8 @@ resource "aws_ecs_cluster" "ecs_cluster" {
   }
 }
 
-# Create ECS Task Definition
-resource "aws_ecs_task_definition" "ecs_task_definition" {
-  family                   = "my-task"
-  container_definitions    = jsonencode([
-    {
-      name        = "nodejs-app"
-      image       = aws_ecr_repository.ecr_repo.repository_url
-      memory      = 256
-      cpu         = 256
-      essential   = true
-      portMappings = [
-        {
-          containerPort = 3000
-          hostPort      = 3000
-        }
-      ]
-    }
-  ])
-
-  tags = {
-    name      = "ecs-task-definition"
-    terraform = "true"
-  }
-}
-
 resource "aws_ecs_service" "ecs_service" {
-  name            = "my-service"
+  name            = "ecs-service"
   cluster         = aws_ecs_cluster.ecs_cluster.id
   task_definition = aws_ecs_task_definition.ecs_task_definition.arn
   desired_count   = 1
@@ -153,6 +136,91 @@ resource "aws_ecs_service" "ecs_service" {
 
   tags = {
     name      = "ecs-service"
+    terraform = "true"
+  }
+}
+
+resource "aws_ecs_task_definition" "ecs_task_definition" {
+  family                   = "ecs-task"
+  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+  container_definitions    = jsonencode([
+    {
+      name        = "nodejs-app"
+      image       = "${aws_ecr_repository.ecr_repo.repository_url}:latest"
+      memory      = 256
+      cpu         = 256
+      essential   = true
+      portMappings = [
+        {
+          containerPort = 3000
+          hostPort      = 3000
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.ecs_log_group.name
+          awslogs-region        = "eu-west-2"
+          awslogs-stream-prefix = "ecs"
+        }
+      }
+    }
+  ])
+
+  tags = {
+    name      = "ecs-task-definition"
+    terraform = "true"
+  }
+}
+
+
+########################################################################
+####################            IAM            #########################
+########################################################################
+
+resource "aws_iam_role" "ecs_task_execution_role" {
+  name = "ecs_task_execution_role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = "sts:AssumeRole",
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        },
+        Effect = "Allow",
+        Sid    = ""
+      }
+    ]
+  })
+
+  tags = {
+    name      = "ecs-task-execution-role"
+    terraform = "true"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
+  role       = aws_iam_role.ecs_task_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "cloudwatch_logs_policy" {
+  role       = aws_iam_role.ecs_task_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+}
+
+########################################################################
+####################         CLOUDWATCH        #########################
+########################################################################
+
+resource "aws_cloudwatch_log_group" "ecs_log_group" {
+  name              = "/ecs/my-service"
+  retention_in_days = 1 
+
+  tags = {
+    name      = "ecs-log-group"
     terraform = "true"
   }
 }
