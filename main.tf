@@ -21,7 +21,7 @@ resource "aws_subnet" "public_subnet" {
   map_public_ip_on_launch = true
 
   tags = {
-    name      = "public-subnet-${count.index + 1}" # sets the name from the current iteration of var.public_subnet
+    name      = "public-subnet-${count.index + 1}" # sets the name from the current iteration of var.public_cidr_blocks
     terraform = "true"
   }
 }
@@ -64,6 +64,52 @@ resource "aws_route_table_association" "subnet_association" {
 }
 
 ########################################################################
+####################       LOAD BALANCER      ##########################
+########################################################################
+
+resource "aws_lb" "alb" {
+  name               = "alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.ecs_sg.id]
+  subnets            = aws_subnet.public_subnet[*].id
+
+  tags = {
+    name      = "alb"
+    terraform = "true"
+  }
+}
+
+resource "aws_lb_target_group" "ecs_target_group" {
+  name     = "target-group"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.vpc.id
+
+  health_check {
+    path = "/"
+    port = "80"
+    protocol = "HTTP"
+  }
+
+  tags = {
+    name      = "alb-tg"
+    terraform = "true"
+  }
+}
+
+resource "aws_lb_listener" "alb_listener" {
+  load_balancer_arn = aws_lb.alb.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.ecs_target_group.arn
+  }
+}
+
+########################################################################
 ####################      SECURITY GROUP       #########################
 ########################################################################
 
@@ -92,13 +138,12 @@ resource "aws_security_group" "ecs_sg" {
   }
 }
 
-
 ########################################################################
 ####################            ECR            #########################
 ########################################################################
 
 resource "aws_ecr_repository" "ecr_repo" {
-  name = "nodejs-app"
+  name = "ecr-repo"
 
   tags = {
     name      = "ecr-repo"
@@ -119,6 +164,7 @@ resource "aws_ecs_cluster" "ecs_cluster" {
   }
 }
 
+
 resource "aws_ecs_service" "ecs_service" {
   name            = "ecs-service"
   cluster         = aws_ecs_cluster.ecs_cluster.id
@@ -132,11 +178,17 @@ resource "aws_ecs_service" "ecs_service" {
     assign_public_ip = true
   }
 
-  depends_on = [aws_ecs_task_definition.ecs_task_definition]
+  load_balancer {
+    target_group_arn = aws_lb_target_group.ecs_target_group.arn
+    container_name   = var.app_name
+    container_port   = 80
+  }
+
+  depends_on = [aws_lb_listener.alb_listener]
 
   tags = {
-    name      = "ecs-service"
-    terraform = "true"
+    Name      = "ecs-service"
+    Terraform = "true"
   }
 }
 
@@ -172,7 +224,6 @@ resource "aws_ecs_task_definition" "ecs_task_definition" {
     terraform = "true"
   }
 }
-
 
 ########################################################################
 ####################            IAM            #########################
