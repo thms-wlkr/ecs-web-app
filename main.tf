@@ -73,8 +73,8 @@ resource "aws_security_group" "ecs_sg" {
   vpc_id      = aws_vpc.vpc.id
 
   ingress {
-    from_port   = 3000
-    to_port     = 3000
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -147,13 +147,13 @@ resource "aws_ecs_task_definition" "ecs_task_definition" {
     {
       name        = "nodejs-app"
       image       = "${aws_ecr_repository.ecr_repo.repository_url}:latest"
-      memory      = 256
+      memory      = 512
       cpu         = 256
       essential   = true
       portMappings = [
         {
-          containerPort = 3000
-          hostPort      = 3000
+          containerPort = 80
+          hostPort      = 80
         }
       ]
       logConfiguration = {
